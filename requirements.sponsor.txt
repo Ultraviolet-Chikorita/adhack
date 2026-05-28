@@ -1,0 +1,4 @@
+-r requirements.txt
+overmind-sdk==0.1.38
+mcp==1.27.1
+sse-starlette==2.1.3

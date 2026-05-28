@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GuardrailBidder Command Console</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Thrad-ready buy-side agent</p>
+          <h1>GuardrailBidder</h1>
+        </div>
+        <div class="topbar-actions">
+          <button id="run-demo" class="primary">Run Seeded Demo</button>
+          <button id="refresh" class="secondary">Refresh</button>
+        </div>
+      </header>
+
+      <section class="status-grid" aria-label="System status">
+        <article class="metric">
+          <span>Total spend</span>
+          <strong id="metric-spend">$0.00</strong>
+          <small>Simulated media commitment</small>
+        </article>
+        <article class="metric">
+          <span>Pending review</span>
+          <strong id="metric-approvals">0</strong>
+          <small>Human-in-the-loop queue</small>
+        </article>
+        <article class="metric">
+          <span>Policy hits</span>
+          <strong id="metric-policy">0</strong>
+          <small>Overmind mirrored trace events</small>
+        </article>
+        <article class="metric">
+          <span>Risk score</span>
+          <strong id="metric-risk">--</strong>
+          <small>Active guardrail flags (higher = more attention)</small>
+        </article>
+      </section>
+
+      <section class="integrations">
+        <div class="integration-card">
+          <span>Overmind</span>
+          <strong id="overmind-status">Checking</strong>
+          <small id="overmind-detail">Supervision bridge</small>
+        </div>
+        <div class="integration-card">
+          <span>MCP / Alpic</span>
+          <strong id="mcp-status">Checking</strong>
+          <small id="mcp-detail">Streamable HTTP endpoint</small>
+        </div>
+        <div class="integration-card">
+          <span>Tavily</span>
+          <strong id="tavily-status">Claim grounding</strong>
+          <small>Factual claims require a source URL</small>
+        </div>
+      </section>
+
+      <nav class="tabs" aria-label="Workspace">
+        <button class="tab active" data-tab="command">Command</button>
+        <button class="tab" data-tab="contracts">Boundaries</button>
+        <button class="tab" data-tab="creative">Creative</button>
+        <button class="tab" data-tab="placements">Placements</button>
+        <button class="tab" data-tab="trace">Trace</button>
+      </nav>
+
+      <section id="panel-command" class="panel active">
+        <div class="split">
+          <article class="workspace">
+            <div class="section-heading">
+              <h2>Prompt Bid Console</h2>
+              <p>Score conversational intent and test whether the agent can commit spend alone.</p>
+            </div>
+            <label>
+              Prompt
+              <textarea id="prompt-input">Best CRM pricing and free trial for a 50-person agency.</textarea>
+            </label>
+            <label>
+              Placement
+              <input id="placement-input" value="chatgpt-sponsored-answer-1" />
+            </label>
+            <button id="evaluate-bid" class="primary wide">Evaluate Bid</button>
+            <pre id="bid-output" class="output"></pre>
+          </article>
+
+          <article class="workspace">
+            <div class="section-heading">
+              <h2>Flag Board</h2>
+              <p>What judges should see fire during the demo.</p>
+            </div>
+            <div id="flag-board" class="flag-board"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="panel-contracts" class="panel">
+        <div class="section-heading">
+          <h2>Agent Authority Boundaries</h2>
+          <p>The three governance questions are represented as executable policy contracts.</p>
+        </div>
+        <div id="contracts" class="contracts"></div>
+      </section>
+
+      <section id="panel-creative" class="panel">
+        <div class="split">
+          <article class="workspace">
+            <div class="section-heading">
+              <h2>Creative Lab</h2>
+              <p>Generate variants and require safety plus live claim grounding before serving.</p>
+            </div>
+            <label>
+              Prompt context
+              <input id="creative-prompt" value="Compare CRM tools for enterprise marketing agencies." />
+            </label>
+            <button id="generate-creatives" class="primary wide">Generate Variants</button>
+          </article>
+          <article class="workspace">
+            <div class="section-heading">
+              <h2>Creative Decisions</h2>
+              <p>PASS variants can serve; FAIL or REVIEW enters the approval queue.</p>
+            </div>
+            <div id="creative-list" class="list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="panel-placements" class="panel">
+        <div class="split">
+          <article class="workspace">
+            <div class="section-heading">
+              <h2>Waste Detector</h2>
+              <p>Evaluate ROAS and auto-pause unprofitable placements.</p>
+            </div>
+            <div class="form-grid">
+              <label>Placement <input id="waste-placement" value="chatgpt-sponsored-answer-1" /></label>
+              <label>Impressions <input id="waste-impressions" type="number" value="700" /></label>
+              <label>Clicks <input id="waste-clicks" type="number" value="40" /></label>
+              <label>Spend <input id="waste-spend" type="number" value="220" /></label>
+              <label>Revenue <input id="waste-revenue" type="number" value="60" /></label>
+            </div>
+            <button id="evaluate-waste" class="primary wide">Evaluate Waste</button>
+            <pre id="waste-output" class="output"></pre>
+          </article>
+          <article class="workspace">
+            <div class="section-heading">
+              <h2>Placements</h2>
+              <p>Current performance state.</p>
+            </div>
+            <div id="placements-table" class="table"></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="panel-trace" class="panel">
+        <div class="section-heading">
+          <h2>Supervision Trace</h2>
+          <p>Every decision writes an app trace and an Overmind span when configured.</p>
+        </div>
+        <div id="trace-list" class="trace-list"></div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
