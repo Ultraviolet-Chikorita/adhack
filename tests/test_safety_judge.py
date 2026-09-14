@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -64,25 +65,27 @@ class _MalformedJudgeClient:
 
 
 def test_missing_model_credentials_fail_closed(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "openai_api_key", "")
+    test_settings = replace(settings, openai_api_key="")
+    monkeypatch.setattr(safety_judge, "settings", test_settings)
 
     verdict, confidence, reason, claim, source = safety_judge._llm_safety_judge(_safe_creative())
 
     assert verdict == "REVIEW"
-    assert confidence < settings.safety_confidence_threshold
+    assert confidence < test_settings.safety_confidence_threshold
     assert claim is None
     assert source == "fallback"
     assert "human review" in reason.lower()
 
 
 def test_invalid_llm_output_records_fallback_as_actual_source(monkeypatch) -> None:
-    monkeypatch.setattr(settings, "openai_api_key", "test-key")
+    test_settings = replace(settings, openai_api_key="test-key")
+    monkeypatch.setattr(safety_judge, "settings", test_settings)
     monkeypatch.setattr(safety_judge, "OpenAI", lambda api_key: _MalformedJudgeClient())
 
     verdict, confidence, reason, claim, source = safety_judge._llm_safety_judge(_safe_creative())
 
     assert verdict == "REVIEW"
-    assert confidence < settings.safety_confidence_threshold
+    assert confidence < test_settings.safety_confidence_threshold
     assert claim is None
     assert source == "fallback"
     assert "human review" in reason.lower()
