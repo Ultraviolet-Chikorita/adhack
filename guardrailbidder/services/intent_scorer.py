@@ -25,10 +25,14 @@ BUY_KEYWORDS = {
 
 
 def heuristic_intent(prompt: str) -> IntentScore:
-    tokens = {t.strip(".,!?").lower() for t in prompt.split()}
+    tokens = {t.strip(".,!?").lower() for t in prompt.split() if t.strip(".,!?")}
     matches = len(tokens.intersection(BUY_KEYWORDS))
-    length_bonus = min(len(tokens) / 40.0, 0.2)
-    score = min(0.15 + matches * 0.12 + length_bonus, 0.99)
+
+    # Generic prompt length is not evidence of purchase intent. Only add a
+    # small specificity bonus once at least one relevant commercial signal is
+    # present; otherwise unrelated prompts must remain below the bid threshold.
+    specificity_bonus = min(len(tokens) / 40.0, 0.15) if matches else 0.0
+    score = min(0.05 + matches * 0.15 + specificity_bonus, 0.99)
     rationale = f"{matches} buy-intent keywords matched."
     return IntentScore(score=round(score, 3), rationale=rationale, source="heuristic")
 
