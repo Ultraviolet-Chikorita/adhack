@@ -23,13 +23,14 @@ For the core supervision logic, start with:
 | File | Why it matters |
 | --- | --- |
 | [`guardrailbidder/services/bidder.py`](guardrailbidder/services/bidder.py) | spend limits, escalation and bid decisions |
-| [`guardrailbidder/services/safety_judge.py`](guardrailbidder/services/safety_judge.py) | policy-first creative review, LLM fallback path and claim verification |
+| [`guardrailbidder/services/safety_judge.py`](guardrailbidder/services/safety_judge.py) | policy-first creative review, schema-validated model output, conservative fallback path and claim verification |
 | [`guardrailbidder/services/approval_executor.py`](guardrailbidder/services/approval_executor.py) | execution boundary between recommendation and approved action |
 | [`guardrailbidder/services/supervisor.py`](guardrailbidder/services/supervisor.py) | supervision/trace recording |
 | [`guardrailbidder/services/waste_detector.py`](guardrailbidder/services/waste_detector.py) | placement-performance guardrails |
 | [`guardrailbidder/mcp_server.py`](guardrailbidder/mcp_server.py) | MCP tool boundary |
 | [`tests/test_guardrail_edges.py`](tests/test_guardrail_edges.py) | edge-case policy behavior |
 | [`tests/test_approval_executor.py`](tests/test_approval_executor.py) | approval/deferred-action behavior |
+| [`tests/test_safety_judge.py`](tests/test_safety_judge.py) | judge parsing, schema validation and fail-closed fallback behavior |
 | [`tests/test_llm_compat.py`](tests/test_llm_compat.py) | model-client compatibility/fallback behavior |
 
 The TypeScript MCP app lives under [`skybridge__app/src`](skybridge__app/src). Generated frontend build output is intentionally not part of the maintained source tree.
@@ -40,18 +41,19 @@ The TypeScript MCP app lives under [`skybridge__app/src`](skybridge__app/src). G
 flowchart LR
     I[Intent / placement / creative] --> P[Deterministic policy checks]
     P -->|blocked| X[Block + trace]
-    P -->|requires judgement| J[Model / heuristic evaluator]
-    J --> G[Claim or performance grounding]
+    P -->|requires judgement| J[Model evaluator]
+    J -->|unavailable / invalid| H[Human approval queue]
+    J -->|valid output| G[Claim or performance grounding]
     G --> C{Confidence + policy decision}
     C -->|safe and within limits| A[Apply action]
-    C -->|uncertain / sensitive| H[Human approval queue]
+    C -->|uncertain / sensitive| H
     H -->|approved| A
     H -->|rejected| X
     A --> T[Trace outcome]
     X --> T
 ```
 
-A useful property of this design is that **approval is an execution boundary**: creating a recommendation and committing spend/serving a creative/pausing a placement are separate operations.
+A useful property of this design is that **approval is an execution boundary**: creating a recommendation and committing spend/serving a creative/pausing a placement are separate operations. The creative judge also fails closed: if the model judge is unavailable or returns invalid structured output, deterministic checks may still block an explicit violation, but otherwise the creative is routed to `REVIEW` rather than automatically passing.
 
 ## Project structure
 
@@ -122,7 +124,7 @@ python -m guardrailbidder.mcp_server
 
 ## Important behavior
 
-- Without `OPENAI_API_KEY`, intent/creative model paths use deterministic fallback logic.
+- Without `OPENAI_API_KEY`, explicit blocked terms can still fail deterministically, but otherwise creative judgement is escalated to human review rather than passed.
 - Without `TAVILY_API_KEY`, claim checking falls back to local heuristics; this should be treated as a demo mode, not equivalent evidence quality.
 - Low-confidence or explicitly risky creative decisions are escalated rather than automatically served.
 - Approving an item executes the deferred action; creating the approval item does not itself commit that action.
@@ -139,4 +141,4 @@ python -m guardrailbidder.mcp_server
 
 ## Next engineering steps
 
-The most useful next work would be to schema-validate every model-generated judgement, benchmark judge/fallback reliability on a labelled fixture set, make traces durable rather than in-memory/demo-oriented, and test policy invariants across the Python API and MCP surfaces from the same fixtures.
+The most useful next work would be to benchmark judge/fallback reliability on a labelled fixture set, make traces durable rather than in-memory/demo-oriented, and test policy invariants across the Python API and MCP surfaces from the same fixtures.
