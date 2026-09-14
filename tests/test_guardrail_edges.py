@@ -28,7 +28,13 @@ def test_claim_without_source_is_blocked(monkeypatch) -> None:
     monkeypatch.setattr(
         safety_judge,
         "_llm_safety_judge",
-        lambda creative: ("PASS", 0.91, "LLM judge passed brand safety.", creative.claim),
+        lambda creative: (
+            "PASS",
+            0.91,
+            "LLM judge passed brand safety.",
+            creative.claim,
+            "llm",
+        ),
     )
     monkeypatch.setattr(
         safety_judge,
@@ -47,6 +53,7 @@ def test_claim_without_source_is_blocked(monkeypatch) -> None:
     )
     judgement = safety_judge.judge_creative(creative)
     assert judgement.verdict == "FAIL"
+    assert judgement.judge_source == "llm"
     assert "lacks live source citation" in judgement.reason.lower()
 
 
@@ -54,7 +61,13 @@ def test_llm_review_escalates_before_serving(monkeypatch) -> None:
     monkeypatch.setattr(
         safety_judge,
         "_llm_safety_judge",
-        lambda creative: ("REVIEW", 0.61, "LLM judge found ambiguous comparative language.", None),
+        lambda creative: (
+            "REVIEW",
+            0.61,
+            "LLM judge found ambiguous comparative language.",
+            None,
+            "llm",
+        ),
     )
     creative = SimpleNamespace(
         id="c-2",
