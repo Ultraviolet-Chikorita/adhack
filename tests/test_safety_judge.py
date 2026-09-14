@@ -10,6 +10,15 @@ from guardrailbidder.models import CreativeVariant
 from guardrailbidder.services import safety_judge
 
 
+def _safe_creative() -> CreativeVariant:
+    return CreativeVariant(
+        id="creative-test",
+        headline="Automate routine CRM work",
+        body="Route qualified leads to the right workflow.",
+        claim=None,
+    )
+
+
 def test_off_brand_creative_is_blocked(client) -> None:
     response = client.post(
         "/creative/judge-inline",
@@ -54,20 +63,42 @@ class _MalformedJudgeClient:
     responses = _Responses()
 
 
+def test_missing_model_credentials_fail_closed(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "openai_api_key", "")
+
+    verdict, confidence, reason, claim, source = safety_judge._llm_safety_judge(_safe_creative())
+
+    assert verdict == "REVIEW"
+    assert confidence < settings.safety_confidence_threshold
+    assert claim is None
+    assert source == "fallback"
+    assert "human review" in reason.lower()
+
+
 def test_invalid_llm_output_records_fallback_as_actual_source(monkeypatch) -> None:
     monkeypatch.setattr(settings, "openai_api_key", "test-key")
     monkeypatch.setattr(safety_judge, "OpenAI", lambda api_key: _MalformedJudgeClient())
 
-    creative = CreativeVariant(
-        id="creative-test",
-        headline="Automate routine CRM work",
-        body="Route qualified leads to the right workflow.",
-        claim=None,
-    )
-    verdict, confidence, reason, claim, source = safety_judge._llm_safety_judge(creative)
+    verdict, confidence, reason, claim, source = safety_judge._llm_safety_judge(_safe_creative())
 
-    assert verdict == "PASS"
-    assert confidence <= 0.7
+    assert verdict == "REVIEW"
+    assert confidence < settings.safety_confidence_threshold
     assert claim is None
     assert source == "fallback"
-    assert "invalid" in reason.lower()
+    assert "human review" in reason.lower()
+    assert "not valid json" not in reason.lower()
+
+
+def test_fallback_still_blocks_explicit_policy_violation() -> None:
+    creative = CreativeVariant(
+        id="creative-blocked",
+        headline="Guaranteed results",
+        body="Get instant riches with zero effort.",
+        claim=None,
+    )
+
+    verdict, confidence, reason, claim = safety_judge._fallback_judge(creative)
+
+    assert verdict == "FAIL"
+    assert confidence > 0.8
+    assert "blocked" in reason.lower()
