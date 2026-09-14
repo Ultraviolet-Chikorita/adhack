@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from openai import OpenAI
+from pydantic import BaseModel, Field
 
 from guardrailbidder.config import settings
 from guardrailbidder.models import (
@@ -18,6 +20,46 @@ from guardrailbidder.state import app_state
 BLOCKED_TERMS = {"guaranteed", "zero effort", "instant riches", "beat every competitor"}
 
 
+class _CreativeJudgePayload(BaseModel):
+    """Validated boundary between model text and policy logic."""
+
+    verdict: Literal["PASS", "FAIL", "REVIEW"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    reason: str = Field(min_length=1)
+    factual_claim: str | None = None
+
+
+def _extract_json_object(text: str) -> dict:
+    """Extract the first complete JSON object from a model response.
+
+    The responses API may still return fenced or prose-wrapped JSON. We accept that
+    presentation noise but reject malformed/incomplete objects rather than silently
+    manufacturing defaults for missing judge fields.
+    """
+    stripped = text.strip()
+    try:
+        payload = json.loads(stripped)
+        if not isinstance(payload, dict):
+            raise ValueError("judge output must be a JSON object")
+        return payload
+    except json.JSONDecodeError:
+        pass
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(stripped):
+        if char != "{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(stripped[index:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            raise ValueError("judge output must be a JSON object")
+        return payload
+
+    raise ValueError("judge output did not contain a complete JSON object")
+
+
 def _brand_guardrails() -> str:
     brand = settings.brand_name
     return f"""
@@ -30,15 +72,18 @@ regulated claims, deceptive urgency, or unsupported performance promises.
 
 
 def _fallback_judge(creative: CreativeVariant) -> tuple[str, float, str, str | None]:
+    """Coarse deterministic fallback for demo continuity, not a calibrated judge."""
     text = f"{creative.headline} {creative.body}".lower()
     if any(term in text for term in BLOCKED_TERMS):
         return "FAIL", 0.92, "Fallback policy detected a blocked brand-safety term.", creative.claim
     return "PASS", 0.78, "Fallback policy found no obvious safety issue.", creative.claim
 
 
-def _llm_safety_judge(creative: CreativeVariant) -> tuple[str, float, str, str | None]:
+def _llm_safety_judge(creative: CreativeVariant) -> tuple[str, float, str, str | None, str]:
+    """Return a validated judgement plus the source that actually produced it."""
     if not settings.openai_api_key:
-        return _fallback_judge(creative)
+        verdict, confidence, reason, claim = _fallback_judge(creative)
+        return verdict, confidence, reason, claim, "fallback"
 
     system_msg = (
         "You are a strict ad creative brand-safety judge. Return JSON only with keys: "
@@ -75,18 +120,20 @@ def _llm_safety_judge(creative: CreativeVariant) -> tuple[str, float, str, str |
                 temperature=0.0,
                 response_format={"type": "json_object"},
             )
-            text = response.choices[0].message.content or "{}"
-        payload = json.loads(text)
-        verdict = str(payload.get("verdict", "REVIEW")).upper()
-        if verdict not in {"PASS", "FAIL", "REVIEW"}:
-            verdict = "REVIEW"
-        confidence = max(0.0, min(1.0, float(payload.get("confidence", 0.5))))
-        reason = str(payload.get("reason") or "LLM judge returned no reason.")
-        claim = str(payload.get("factual_claim") or creative.claim or "").strip() or None
-        return verdict, confidence, reason, claim
+            text = response.choices[0].message.content or ""
+
+        payload = _CreativeJudgePayload.model_validate(_extract_json_object(text))
+        claim = (payload.factual_claim or creative.claim or "").strip() or None
+        return payload.verdict, payload.confidence, payload.reason, claim, "llm"
     except Exception as exc:
         verdict, confidence, reason, claim = _fallback_judge(creative)
-        return verdict, min(confidence, 0.7), f"{reason} LLM judge unavailable: {exc}", claim
+        return (
+            verdict,
+            min(confidence, 0.7),
+            f"{reason} LLM judge unavailable or invalid: {exc}",
+            claim,
+            "fallback",
+        )
 
 
 def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
@@ -111,7 +158,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             )
             return judgement
 
-    verdict, confidence, reason, detected_claim = _llm_safety_judge(creative)
+    verdict, confidence, reason, detected_claim, judge_source = _llm_safety_judge(creative)
     claim_to_verify = detected_claim or creative.claim or ""
 
     if verdict in {"FAIL", "REVIEW"}:
@@ -121,7 +168,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             confidence=confidence,
             reason=reason,
             claim_verified=False if verdict == "FAIL" else None,
-            judge_source="llm" if settings.openai_api_key else "fallback",
+            judge_source=judge_source,
         )
         _escalate_creative(judgement)
         policy_hit(
@@ -130,6 +177,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             reason=judgement.reason,
             creative_id=creative.id,
             confidence=judgement.confidence,
+            judge_source=judge_source,
         )
         return judgement
 
@@ -142,7 +190,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             reason=f"Claim check failed: {check.reason}",
             claim_verified=False,
             source_url=check.source_url,
-            judge_source="llm" if settings.openai_api_key else "fallback",
+            judge_source=judge_source,
         )
         _escalate_creative(judgement)
         policy_hit(
@@ -151,6 +199,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             reason=judgement.reason,
             creative_id=creative.id,
             claim=claim_to_verify,
+            judge_source=judge_source,
         )
         return judgement
 
@@ -162,7 +211,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             reason="Factual claim lacks live source citation.",
             claim_verified=False,
             source_url=check.source_url,
-            judge_source="llm" if settings.openai_api_key else "fallback",
+            judge_source=judge_source,
         )
         _escalate_creative(judgement)
         policy_hit(
@@ -171,6 +220,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             reason=judgement.reason,
             creative_id=creative.id,
             claim=claim_to_verify,
+            judge_source=judge_source,
         )
         return judgement
 
@@ -182,7 +232,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             reason="Low safety confidence.",
             claim_verified=check.verified,
             source_url=check.source_url,
-            judge_source="llm" if settings.openai_api_key else "fallback",
+            judge_source=judge_source,
         )
         _escalate_creative(judgement)
         policy_hit(
@@ -191,6 +241,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
             reason=judgement.reason,
             creative_id=creative.id,
             confidence=judgement.confidence,
+            judge_source=judge_source,
         )
         return judgement
 
@@ -201,7 +252,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
         reason="Creative is in-guardrail and claim check passed.",
         claim_verified=check.verified,
         source_url=check.source_url,
-        judge_source="llm" if settings.openai_api_key else "fallback",
+        judge_source=judge_source,
     )
     policy_hit(
         policy="serve_creative.brand_safety",
@@ -209,6 +260,7 @@ def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
         reason=judgement.reason,
         creative_id=creative.id,
         confidence=judgement.confidence,
+        judge_source=judge_source,
     )
     return judgement
 
