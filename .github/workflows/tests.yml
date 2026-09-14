@@ -36,7 +36,7 @@ jobs:
         # The checked-in lockfile predates the current package graph. Use npm
         # install for CI until the lockfile is intentionally regenerated.
         run: npm install --no-audit --no-fund
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Build
+      - name: Build and generate Skybridge view types
         run: npm run build
+      - name: Typecheck generated application surface
+        run: npm run typecheck
