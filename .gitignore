@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Generated supervision traces
+overmind-traces.jsonl
+*.trace.jsonl
+
+# Frontend
+skybridge__app/node_modules/
+skybridge__app/dist/
+skybridge__app/tsconfig.tsbuildinfo
+
+# Editors / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
