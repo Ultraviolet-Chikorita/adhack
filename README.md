@@ -16,11 +16,9 @@ A proposed action passes through several distinct controls instead of relying on
 - **Decision traces** - policy decisions are recorded and can optionally be mirrored to Overmind.
 - **MCP exposure** - the same supervised actions can be called through an MCP server and Skybridge UI.
 
-## Reviewer guide
+## Key components
 
-For the core supervision logic, start with:
-
-| File | Why it matters |
+| File | Responsibility |
 | --- | --- |
 | [`guardrailbidder/services/bidder.py`](guardrailbidder/services/bidder.py) | spend limits, escalation and bid decisions |
 | [`guardrailbidder/services/safety_judge.py`](guardrailbidder/services/safety_judge.py) | policy-first creative review, schema-validated model output, conservative fallback path and claim verification |
@@ -139,6 +137,6 @@ python -m guardrailbidder.mcp_server
 - The project does not establish that the selected spend, safety, confidence, or ROAS thresholds are optimal.
 - A shared model/runtime used across several judgements does not provide evaluator independence merely because prompts differ.
 
-## Next engineering steps
+## Future work
 
 The most useful next work would be to benchmark judge/fallback reliability on a labelled fixture set, make traces durable rather than in-memory/demo-oriented, and test policy invariants across the Python API and MCP surfaces from the same fixtures.
