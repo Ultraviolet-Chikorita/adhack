@@ -1,119 +1,142 @@
 # GuardrailBidder
 
-GuardrailBidder is a Python-first buy-side agent demo for conversational ad channels with explicit human-in-the-loop controls:
+GuardrailBidder is a **guardrailed agent prototype for conversational advertising workflows**. It explores a simple question: if an AI system can score commercial intent, propose bids, generate creatives, and pause poor-performing placements, where should deterministic policy checks, model-based judgements, external evidence, and human approval sit in the action path?
 
-- Money commitment guardrails: per-placement cap, cumulative ceiling, spike escalation.
-- Creative guardrails: variant generation, safety judging, claim grounding via Tavily.
-- Waste guardrails: ROAS floor checks with auto-pause and borderline human review.
-- Supervision visibility: trace timeline of all decisions.
-- Overmind supervision bridge: decision traces mirrored as spans when configured.
-- MCP server for Alpic: tools exposed on `/mcp` via Streamable HTTP.
-- Skybridge MCP App: interactive ChatGPT/MCP views that proxy to the Python agent.
+The project was built as a demo/prototype rather than a production ad platform. It is useful as an example of **human-in-the-loop agent supervision**, but its heuristic fallbacks and model judges are not calibrated safety guarantees.
 
-## Quickstart
+## What it demonstrates
 
-```powershell
+A proposed action passes through several distinct controls instead of relying on one model call:
+
+- **Spend controls** - per-placement caps, cumulative budget ceilings, and spike escalation.
+- **Creative controls** - deterministic blocked-term checks followed by model-based review.
+- **Claim grounding** - factual/performance claims can be checked against live search evidence.
+- **Waste controls** - low-ROAS placements can be paused or escalated for review.
+- **Human approval** - deferred actions are materialized as explicit approval items rather than silently executed.
+- **Decision traces** - policy decisions are recorded and can optionally be mirrored to Overmind.
+- **MCP exposure** - the same supervised actions can be called through an MCP server and Skybridge UI.
+
+## Reviewer guide
+
+For the core supervision logic, start with:
+
+| File | Why it matters |
+| --- | --- |
+| [`guardrailbidder/services/bidder.py`](guardrailbidder/services/bidder.py) | spend limits, escalation and bid decisions |
+| [`guardrailbidder/services/safety_judge.py`](guardrailbidder/services/safety_judge.py) | policy-first creative review, LLM fallback path and claim verification |
+| [`guardrailbidder/services/approval_executor.py`](guardrailbidder/services/approval_executor.py) | execution boundary between recommendation and approved action |
+| [`guardrailbidder/services/supervisor.py`](guardrailbidder/services/supervisor.py) | supervision/trace recording |
+| [`guardrailbidder/services/waste_detector.py`](guardrailbidder/services/waste_detector.py) | placement-performance guardrails |
+| [`guardrailbidder/mcp_server.py`](guardrailbidder/mcp_server.py) | MCP tool boundary |
+| [`tests/test_guardrail_edges.py`](tests/test_guardrail_edges.py) | edge-case policy behavior |
+| [`tests/test_approval_executor.py`](tests/test_approval_executor.py) | approval/deferred-action behavior |
+| [`tests/test_llm_compat.py`](tests/test_llm_compat.py) | model-client compatibility/fallback behavior |
+
+The TypeScript MCP app lives under [`skybridge__app/src`](skybridge__app/src). Generated frontend build output is intentionally not part of the maintained source tree.
+
+## Decision flow
+
+```mermaid
+flowchart LR
+    I[Intent / placement / creative] --> P[Deterministic policy checks]
+    P -->|blocked| X[Block + trace]
+    P -->|requires judgement| J[Model / heuristic evaluator]
+    J --> G[Claim or performance grounding]
+    G --> C{Confidence + policy decision}
+    C -->|safe and within limits| A[Apply action]
+    C -->|uncertain / sensitive| H[Human approval queue]
+    H -->|approved| A
+    H -->|rejected| X
+    A --> T[Trace outcome]
+    X --> T
+```
+
+A useful property of this design is that **approval is an execution boundary**: creating a recommendation and committing spend/serving a creative/pausing a placement are separate operations.
+
+## Project structure
+
+```text
+guardrailbidder/
+  app.py                 FastAPI API and demo orchestration
+  config.py              runtime configuration
+  mcp_server.py          MCP tool surface
+  models.py              typed domain models
+  state.py               in-memory demo state
+  services/
+    approval_executor.py
+    bidder.py
+    creative_agent.py
+    intent_scorer.py
+    safety_judge.py
+    seeded_demo.py
+    supervisor.py
+    tavily_claims.py
+    waste_detector.py
+  web/                    lightweight browser console
+
+skybridge__app/
+  src/                    TypeScript MCP app / UI source
+
+tests/                    Python behavior and integration tests
+```
+
+## Quick start
+
+```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+# Windows: .venv\Scripts\activate
+# Unix/macOS: source .venv/bin/activate
 pip install -r requirements.txt
-copy .env.example .env
+cp .env.example .env  # if using the optional integrations
 ```
 
-Install sponsor integrations (Overmind + MCP/Alpic):
+Run the API:
 
-```powershell
-pip install -r requirements.sponsor.txt
+```bash
+python -m uvicorn guardrailbidder.app:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Run API:
+Run the tests:
 
-```powershell
-.\.venv\Scripts\python -m uvicorn guardrailbidder.app:app --reload --host 127.0.0.1 --port 8000
+```bash
+python -m pytest -q
 ```
 
-Open the HTML/CSS/JS console:
+Optional sponsor/MCP integrations use `requirements.sponsor.txt`.
 
-```text
-http://127.0.0.1:8000/
+For the Skybridge app:
+
+```bash
+cd skybridge__app
+npm ci
+npm run typecheck
+npm run build
+npm run dev
 ```
 
-Run tests:
+The Python MCP process can be started separately with:
 
-```powershell
-.\.venv\Scripts\python -m pytest -q
+```bash
+python -m guardrailbidder.mcp_server
 ```
 
-Run MCP server (for Alpic/local MCP clients). The MCP process proxies all tools to the FastAPI API — start the API first:
+## Important behavior
 
-```powershell
-.\.venv\Scripts\python -m guardrailbidder.mcp_server
-```
+- Without `OPENAI_API_KEY`, intent/creative model paths use deterministic fallback logic.
+- Without `TAVILY_API_KEY`, claim checking falls back to local heuristics; this should be treated as a demo mode, not equivalent evidence quality.
+- Low-confidence or explicitly risky creative decisions are escalated rather than automatically served.
+- Approving an item executes the deferred action; creating the approval item does not itself commit that action.
+- Optional Overmind integration mirrors supervision traces but is not required for the core policy path.
 
-Default MCP endpoint:
+## Limitations
 
-```text
-http://127.0.0.1:8001/mcp
-```
+- The LLM safety judge is **not empirically calibrated** against a labelled ad-safety benchmark.
+- The deterministic fallback rules are intentionally coarse and should not be described as production classifiers.
+- Live claim verification is only as strong as the retrieved evidence and the extraction logic built on top of it.
+- Runtime state is designed for a demo rather than durable multi-user serving.
+- The project does not establish that the selected spend, safety, confidence, or ROAS thresholds are optimal.
+- A shared model/runtime used across several judgements does not provide evaluator independence merely because prompts differ.
 
-Run the Skybridge app surface (Alpic/ChatGPT/MCP App UI):
+## Next engineering steps
 
-```powershell
-cd skybridge_app
-npm.cmd run dev
-```
-
-Default Skybridge endpoints:
-
-```text
-http://127.0.0.1:3000/
-http://127.0.0.1:3000/mcp
-```
-
-Set `GUARDRAIL_API_BASE` when the Skybridge app should call a non-local GuardrailBidder API.
-
-## API Endpoints
-
-- `POST /demo/run`
-- `POST /intent/score`
-- `POST /bid/evaluate`
-- `POST /creative/generate`
-- `POST /creative/judge/{creative_id}`
-- `POST /creative/judge-inline`
-- `POST /placements/upsert`
-- `POST /placements/evaluate-waste/{placement_id}`
-- `GET /approvals`
-- `POST /approvals/{approval_id}`
-- `GET /events`
-- `GET /state/summary`
-- `GET /state/detail`
-- `GET /policy/report`
-- `GET /supervision/status`
-
-## MCP Tools
-
-- `score_intent_tool`
-- `evaluate_bid_tool`
-- `generate_creatives_tool`
-- `judge_creative_tool`
-- `evaluate_waste_tool`
-- `pause_placement_tool`
-- `get_pending_approvals_tool`
-- `get_trace_tool`
-- `run_seeded_demo_tool`
-
-## Skybridge Tools
-
-- `show_guardrail_console`
-- `run_guardrail_demo`
-- `evaluate_conversational_bid`
-- `judge_inline_creative`
-- `evaluate_placement_waste`
-
-## Notes
-
-- If `OPENAI_API_KEY` is missing, intent and creative generation use deterministic fallback logic.
-- If `TAVILY_API_KEY` is missing, claim checks use fallback heuristics and still enforce risky-claim blocking.
-- If `OVERMIND_API_KEY` is configured, supervision traces are mirrored to Overmind via `overmind-sdk`.
-- `alpic.json` is included to run the MCP server in Alpic with `/mcp` compatibility.
-- Approving a pending item (`POST /approvals/{id}`) executes the deferred action: commit spend, clear creative for serving, or pause a borderline placement.
-- `/policy/report` exposes `risk_score` (higher = more active guardrail flags). `readiness_score` is kept as a deprecated alias.
+The most useful next work would be to schema-validate every model-generated judgement, benchmark judge/fallback reliability on a labelled fixture set, make traces durable rather than in-memory/demo-oriented, and test policy invariants across the Python API and MCP surfaces from the same fixtures.
