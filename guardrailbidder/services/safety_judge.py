@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Literal
 
 from openai import OpenAI
@@ -17,6 +18,8 @@ from guardrailbidder.services.supervisor import policy_hit
 from guardrailbidder.services.tavily_claims import verify_claim
 from guardrailbidder.state import app_state
 
+logger = logging.getLogger(__name__)
+
 BLOCKED_TERMS = {"guaranteed", "zero effort", "instant riches", "beat every competitor"}
 
 
@@ -30,12 +33,7 @@ class _CreativeJudgePayload(BaseModel):
 
 
 def _extract_json_object(text: str) -> dict:
-    """Extract the first complete JSON object from a model response.
-
-    The responses API may still return fenced or prose-wrapped JSON. We accept that
-    presentation noise but reject malformed/incomplete objects rather than silently
-    manufacturing defaults for missing judge fields.
-    """
+    """Extract the first complete JSON object from a model response."""
     stripped = text.strip()
     try:
         payload = json.loads(stripped)
@@ -72,11 +70,20 @@ regulated claims, deceptive urgency, or unsupported performance promises.
 
 
 def _fallback_judge(creative: CreativeVariant) -> tuple[str, float, str, str | None]:
-    """Coarse deterministic fallback for demo continuity, not a calibrated judge."""
+    """Conservative deterministic fallback used when the model judge is unavailable.
+
+    Explicitly blocked terms still fail. Everything else is escalated for review rather
+    than silently passing, because absence of a model judgement is not evidence of safety.
+    """
     text = f"{creative.headline} {creative.body}".lower()
     if any(term in text for term in BLOCKED_TERMS):
         return "FAIL", 0.92, "Fallback policy detected a blocked brand-safety term.", creative.claim
-    return "PASS", 0.78, "Fallback policy found no obvious safety issue.", creative.claim
+    return (
+        "REVIEW",
+        0.60,
+        "Model judge unavailable; deterministic checks found no explicit block, so human review is required.",
+        creative.claim,
+    )
 
 
 def _llm_safety_judge(creative: CreativeVariant) -> tuple[str, float, str, str | None, str]:
@@ -125,15 +132,10 @@ def _llm_safety_judge(creative: CreativeVariant) -> tuple[str, float, str, str |
         payload = _CreativeJudgePayload.model_validate(_extract_json_object(text))
         claim = (payload.factual_claim or creative.claim or "").strip() or None
         return payload.verdict, payload.confidence, payload.reason, claim, "llm"
-    except Exception as exc:
+    except Exception:
+        logger.exception("Creative model judge failed; escalating through conservative fallback")
         verdict, confidence, reason, claim = _fallback_judge(creative)
-        return (
-            verdict,
-            min(confidence, 0.7),
-            f"{reason} LLM judge unavailable or invalid: {exc}",
-            claim,
-            "fallback",
-        )
+        return verdict, confidence, reason, claim, "fallback"
 
 
 def judge_creative(creative: CreativeVariant) -> CreativeJudgement:
